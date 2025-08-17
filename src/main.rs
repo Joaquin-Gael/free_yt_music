@@ -34,9 +34,6 @@ use tui::{
   Terminal,
 };
 
-
-let mut sys = System::new_all();
-
 #[derive(Debug)]
 struct Disk {
     name: String,
@@ -54,12 +51,13 @@ struct VideoMetadata {
 }
 
 async fn get_disk_info() -> Result<Vec<Disk>, String> {
-    sys.refresh_disks_list();
-    sys.refresh_disks();
+    let mut sys = System::new_all();
+
+    sys.refresh_all();
 
     let mut disks: Vec<Disk> = Vec::new();
 
-    for disk in sys.disks() {
+    for disk in Disk::new_with_refreshed_list() {
         if disk.is_removable() {
             let name = disk.name().to_string_lossy().into_owned();
             let mount_point = disk.mount_point().to_path_buf();
