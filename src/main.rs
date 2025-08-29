@@ -57,21 +57,28 @@ async fn get_disk_info() -> Result<Vec<Disk>, String> {
 
     let mut disks: Vec<Disk> = Vec::new();
 
-    for disk in Disk::new_with_refreshed_list() {
+    for disk in Disks::new_with_refreshed_list().list() {
         if disk.is_removable() {
             let name = disk.name().to_string_lossy().into_owned();
             let mount_point = disk.mount_point().to_path_buf();
-            let fs = String::from_utf8_lossy(disk.file_system()).into_owned();
+            let fs = disk.file_system().to_string_lossy().to_string();
+            let address = format!("{}:{}", mount_point.to_string_lossy(), fs);
             disks.push(Disk {
                 name,
+                total: 0,
+                free: 0,
+                used: 0,
                 0.0,
                 0.0,
                 0.0,
                 0.0,
                 address,
+                used_percent: 0.0,
             });
         }
     }
+
+    disks
 }
 
 async fn get_or_update_yt_dlp() -> Result<(), String>{
