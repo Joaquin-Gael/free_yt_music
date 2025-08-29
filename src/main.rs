@@ -68,17 +68,17 @@ async fn get_disk_info() -> Result<Vec<Disk>, String> {
                 total: 0,
                 free: 0,
                 used: 0,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
                 address,
                 used_percent: 0.0,
             });
         }
     }
 
-    disks
+    return if disks.is_empty() {
+        Err("No se encontraron discos".to_string())
+    } else {
+        disks
+    }
 }
 
 async fn get_or_update_yt_dlp() -> Result<(), String>{
