@@ -5,7 +5,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
-use std::io;
+use std::io::{self};
 use std::env;
 
 use serde::Deserialize;
@@ -17,10 +17,10 @@ use yt_dlp::fetcher::deps::Libraries;
 
 use anyhow::Result;
 
-use sysinfo::{Disks, System};
+//use sysinfo::{Disks, System};
 
 use crossterm::{
-  event::{self, Event, KeyCode},
+  event::{self, Event, KeyCode, KeyModifiers, KeyEventKind},
   execute,
   terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -34,15 +34,15 @@ use tui::{
   Terminal,
 };
 
-#[derive(Debug)]
-struct Disk {
-    name: String,
-    total: u64,
-    free: u64,
-    used: u64,
-    used_percent: f64,
-    address: String,
-}
+//#[derive(Debug)]
+//struct Disk {
+//    name: String,
+//    total: u64,
+//    free: u64,
+//    used: u64,
+//    used_percent: f64,
+//    address: String,
+//}
 
 #[derive(Deserialize, Debug)]
 struct VideoMetadata {
@@ -50,29 +50,38 @@ struct VideoMetadata {
     author_name: String,
 }
 
-async fn get_disk_info() -> Result<Vec<Disk>, String> {
-    let mut sys = System::new_all();
+//async fn get_disk_info() -> Result<Vec<Disk>, String> {
+//    let mut sys = System::new_all();
 
-    sys.refresh_all();
+//    sys.refresh_all();
 
-    let mut disks: Vec<Disk> = Vec::new();
+//    let mut disks: Vec<Disk> = Vec::new();
 
-    for disk in Disk::new_with_refreshed_list() {
+/*
+    for disk in Disks::new_with_refreshed_list().list() {
         if disk.is_removable() {
             let name = disk.name().to_string_lossy().into_owned();
             let mount_point = disk.mount_point().to_path_buf();
-            let fs = String::from_utf8_lossy(disk.file_system()).into_owned();
+            let fs = disk.file_system().to_string_lossy().to_string();
+            let address = format!("{}:{}", mount_point.to_string_lossy(), fs);
             disks.push(Disk {
                 name,
-                0.0,
-                0.0,
-                0.0,
-                0.0,
+                total: 0,
+                free: 0,
+                used: 0,
                 address,
+                used_percent: 0.0,
             });
         }
     }
+
+    return if disks.is_empty() {
+        Err("No se encontraron discos".to_string())
+    } else {
+        disks
+    }
 }
+*/
 
 async fn get_or_update_yt_dlp() -> Result<(), String>{
     let libraries_dir = PathBuf::from("libs");
@@ -111,8 +120,8 @@ fn sanitize_filename(name: &str) -> String {
     }
 }
 
-async fn get_metadata_video(url: &str) -> Result<VideoMetadata, Box<dyn std::error::Error>> {
-    println!("Obteniendo metadata del video...");
+async fn get_metadata_video(url: &str, tx: &mpsc::Sender<String>) -> Result<VideoMetadata, Box<dyn std::error::Error>> {
+    let _ = tx.send("Obteniendo metadata del video...".to_string());
     let full_url = format!(
         "https://www.youtube.com/oembed?url={}&format=json",
         url
@@ -150,6 +159,7 @@ async fn download_audio(
     output_path: &str,
     audio_format: &str,
     audio_quality: &str,
+    tx: &mpsc::Sender<String>,
 ) -> Result<PathBuf, String> {
 
     let current_dir = env::current_dir().unwrap();
@@ -158,7 +168,7 @@ async fn download_audio(
 
     let yt_dlp_path = root_path.join("yt-dlp.exe");
 
-    println!("binario a buscar: {:?}", yt_dlp_path);
+    let _ = tx.send(format!("binario a buscar: {:?}", yt_dlp_path));
 
     if !yt_dlp_path.exists() {
         return Err("El binario yt-dlp no se encuentra en la carpeta './libs'.".into());
@@ -186,7 +196,7 @@ async fn download_audio(
         .into());
     }
 
-    println!("Audio descargado correctamente en: {}", output_path);
+    let _ = tx.send(format!("Audio descargado correctamente en: {}", output_path));
 
     Ok(PathBuf::from(output_path))
 }
@@ -196,21 +206,23 @@ async fn move_audio_file(
     dest_dir: &Path,
     file_name: &str,
     metadata: &VideoMetadata,
+    tx: &mpsc::Sender<String>,
 ) -> Result<(), String> {
-    if !dest_dir.exists() {
-        println!("La ruta {:?} no existe; créala o revisa el path", dest_dir);
-        fs::create_dir_all(dest_dir).await.unwrap();
-        return Err("Error al crear el directorio de destino".to_string());
-    }
 
     let mut dest_dir = dest_dir.to_path_buf();
 
     dest_dir.push(sanitize_filename(metadata.author_name.as_str()));
     
     if !dest_dir.exists() {
-        println!("La ruta {:?} no existe; créala o revisa el path", &dest_dir);
-        fs::create_dir_all(&dest_dir).await.unwrap();
-        return Err("Error al crear el directorio de destino".to_string());
+        let _ = tx.send(format!("La ruta {:?} no existe; créala o revisa el path", &dest_dir));
+        match fs::create_dir_all(&dest_dir).await {
+            Ok(_) => {
+                let _ = tx.send(format!("Directorio creado exitosamente: {:?}", &dest_dir));
+            },
+            Err(e) => {
+                return Err(format!("Error al crear el directorio de destino: {:?}", e));
+            }
+        }
     }
 
     let source_path = src_dir.join(file_name);
@@ -235,10 +247,10 @@ async fn move_audio_file(
     }
 
     if dest_path.exists() {
-        println!(
+        let _ = tx.send(format!(
             "El archivo '{}' ya existe en el destino. Moviendo con un nuevo nombre...",
             file_name
-        );
+        ));
         
         let mut counter = 1;
         let mut new_dest_path = dest_path.clone();
@@ -271,46 +283,49 @@ async fn move_audio_file(
         fs::remove_file(&source_path).await.unwrap();
     }
 
-    println!("Archivo movido a: {:?}", dest_dir);
+    let _ = tx.send(format!("Archivo movido a: {:?}", dest_dir));
     Ok(())
 }
 
-async fn download(url: &str, dest_dir: &str) -> Result<(), String> {
+async fn download(url: &str, dest_dir: &str, tx: &mpsc::Sender<String>) -> Result<(), String> {
     let output_dir = "output";
     let audio_format = "mp3";
     let audio_quality = "0";
 
     if !Path::new(output_dir).exists() {
         if let Err(e) = fs::create_dir_all(output_dir).await {
-            eprintln!("Error al crear el directorio de salida: {}", e);
+            let _ = tx.send(format!("Error al crear el directorio de salida: {}", e));
             return Ok(());
         }
     }
 
     if !Path::new(dest_dir).exists() {
         if let Err(e) = fs::create_dir_all(dest_dir).await {
-            eprintln!("Error al crear el directorio destino: {}", e);
+            let _ = tx.send(format!("Error al crear el directorio destino: {}", e));
             return Ok(());
         }
     }
 
-    match download_audio(url, output_dir, audio_format, audio_quality).await {
+    match download_audio(url, output_dir, audio_format, audio_quality, tx).await {
         Ok(download_path) => {
             let file_name = get_downloaded_file_name(output_dir).await?.unwrap();
-            println!("File name: {}", file_name);
+            let _ = tx.send(format!("File name: {}", file_name));
 
-            let metadata = get_metadata_video(url).await.unwrap();
-            println!("Video metadata: {:?}", metadata);
+            let metadata = get_metadata_video(url, tx).await.unwrap();
+            let _ = tx.send(format!("Video metadata: {:?}", metadata));
 
-            if let Err(e) = move_audio_file(&download_path, Path::new(dest_dir), &file_name, &metadata).await {
-                eprintln!("Error al mover el archivo: {}", e);
+            if let Err(e) = move_audio_file(&download_path, Path::new(dest_dir), &file_name, &metadata, tx).await {
+                let _ = tx.send(format!("Error al mover el archivo: {}", e));
                 return Err(e.to_string());
+            }
+            else {
+                let _ = tx.send("Archivo movido exitosamente".to_string());
             }
 
             Ok(())
         }
         Err(e) => {
-            eprintln!("Error en la descarga: {}", e);
+            let _ = tx.send(format!("Error en la descarga: {}", e));
             Err(e.to_string())
         }
     }
@@ -341,7 +356,6 @@ fn run_ui(download_tx: tokio_mpsc::Sender<String>, status_rx: Receiver<String>) 
         terminal.draw(|f| {
             let size = f.size();
 
-            // Layout vertical: historial, input, boton
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .margin(1)
@@ -355,7 +369,6 @@ fn run_ui(download_tx: tokio_mpsc::Sender<String>, status_rx: Receiver<String>) 
                 )
                 .split(size);
 
-            // Historial: convertir cada línea a Spans
             let text: Vec<Spans> = messages
                 .iter()
                 .rev()
@@ -363,37 +376,65 @@ fn run_ui(download_tx: tokio_mpsc::Sender<String>, status_rx: Receiver<String>) 
                 .collect();
 
             let messages_block = Paragraph::new(text)
-                .block(Block::default().borders(Borders::ALL).title("Mensajes (recientes)"));
+                .style(
+                    Style::default()
+                    .bg(Color::Rgb(66, 74, 118))
+                    .fg(Color::Rgb(167, 187, 236))
+                )
+                .block(
+                    Block::default()
+                    .borders(Borders::ALL)
+                    .title("Mensajes (recientes)")
+                );
             f.render_widget(messages_block, chunks[0]);
 
-            // Input box
             let input_block = Paragraph::new(input.as_ref())
-                .style(Style::default().fg(Color::Yellow))
-                .block(Block::default().borders(Borders::ALL).title("URL (Enter para enviar)"));
+                .style(
+                    Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Rgb(143, 12, 0))
+                )
+                .block(
+                    Block::default()
+                    .borders(Borders::ALL)
+                    .title("URL: https://www.youtube.com/watch?v=(ID del video)")
+                );
             f.render_widget(input_block, chunks[1]);
 
-            // Botón Send
             let button_style = if button_focused {
                 Style::default()
                     .fg(Color::Black)
                     .bg(Color::Green)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White).bg(Color::DarkGray)
+                Style::default()
+                .bg(Color::Rgb(66, 74, 118))
+                .fg(Color::Rgb(167, 187, 236))
             };
 
-            let button = Paragraph::new("   [ Send ]   ")
+            let button = Paragraph::new("   [ Enviar ]: Enter   [ Salir ]: Ctrl+C / Esc   ")
                 .style(button_style)
                 .block(Block::default().borders(Borders::ALL));
+
             f.render_widget(button, chunks[2]);
         })?;
 
         // Eventos (poll)
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
+                if key.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match key.code {
                     KeyCode::Esc => {
                         // Salir limpiamente
+                        disable_raw_mode()?;
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        terminal.show_cursor()?;
+                        return Ok(());
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                         // Salir limpiamente con Ctrl+C
                         disable_raw_mode()?;
                         execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
                         terminal.show_cursor()?;
@@ -428,26 +469,28 @@ fn run_ui(download_tx: tokio_mpsc::Sender<String>, status_rx: Receiver<String>) 
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Igual que tu código original: update yt-dlp al iniciar
     get_or_update_yt_dlp().await.unwrap();
 
-    // Canal async (tokio) para enviar URLs desde la UI hacia el worker
     let (download_tx, mut download_rx) = tokio_mpsc::channel::<String>(32);
 
-    // Canal sync (std) para que el worker reporte estados a la UI
     let (status_tx, status_rx) = mpsc::channel::<String>();
 
-    // Path de destino (como en tu ejemplo)
-    let usb_path = r"F:\".to_string();
+    //let usb_path = r"F:\".to_string();
+
+    let mut output_path = String::new();
+    
+    println!("Ingrese la ruta de salida:");
+    std::io::stdin().read_line(&mut output_path)?;
+    let output_path = output_path.trim().to_string();
 
     let worker_handle = tokio::spawn({
         let status_tx = status_tx.clone();
-        let usb_path = usb_path.clone();
+        let usb_path = output_path.clone();
         async move {
             while let Some(url) = download_rx.recv().await {
                 let _ = status_tx.send(format!("Descargando: {}", url));
 
-                match download(&url, &usb_path).await {
+                match download(&url, &usb_path, &status_tx).await {
                     Ok(()) => {
                         let _ = status_tx.send(format!("Done: {}", url));
                     }
