@@ -56,7 +56,6 @@ struct VideoMetadata {
 //    sys.refresh_all();
 
 //    let mut disks: Vec<Disk> = Vec::new();
-
 /*
     for disk in Disks::new_with_refreshed_list().list() {
         if disk.is_removable() {
